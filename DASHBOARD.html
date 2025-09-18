@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <!--
+    Scholar Dashboard — Clean & Compact (Full >450 lines)
+    - Compact Material-ish UI
+    - Conference/Meeting/Symposium/Workshop entries excluded
+    - NaN/empty journal excluded (prevents Unknown)
+    - Professor chips built from RAW + CLEAN union (names show even if 0 valid papers)
+    - Category chips: SCI / 국내 / 전체
+    - Sections: Journal (horizontal bars, fixed height), Year (line), Citation histogram (bin=5)
+    - Professor overlay (pure red), overlapping (grouped:false)
+    - Sticky professor chips with right-side selected count & share
+    - Tools: PNG download per chart, export filtered CSV, search & sort, adjustable label font & chart height
+    - Dark mode toggle, log panel for exclusions
+  -->
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>PSID LAB - Scholar Dashboard </title>
+
+  <!-- Fonts & Libs -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
+  <style>
+    :root{
+      /* Theme variables (light) */
+      --primary:#3949ab; 
+      --primary-dark:#283593; 
+      --red:#ff0000; 
+      --surface:#ffffff; 
+      --bg:#f6f7fb; 
+      --text:#0f172a;
+      --muted:#6b7280;
+      --stroke:#e5e7eb;
+      --radius:12px; 
+      --shadow:0 6px 14px rgba(10,22,70,.08);
+      --chip-bg:#eef2ff;
+      --chip-active:#ff0000;
+      --badge-bg:#f1f5f9;
+      --badge-stroke:#e2e8f0;
+      --panel-grad:linear-gradient(180deg,#ffffff,#fafbff);
+
+      /* UI knobs (runtime adjustable via JS) */
+      --journal-height:1400px; /* default fixed journal chart height */
+      --label-font-size:10px;  /* axis label font size */
+    }
+    [data-theme="dark"]{
+      /* Simple dark switch */
+      --primary:#6573ff;
+      --primary-dark:#3c46c1;
+      --red:#ff5b5b;
+      --surface:#0f1220;
+      --bg:#0c0f1c;
+      --text:#e6e7ee;
+      --muted:#9aa0b5;
+      --stroke:#2a2f44;
+      --shadow:none;
+      --chip-bg:#20243a;
+      --chip-active:#ff5b5b;
+      --badge-bg:#14182b;
+      --badge-stroke:#2a2f44;
+      --panel-grad:linear-gradient(180deg,#0f1220,#0b1020);
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;background:var(--bg);color:var(--text);
+      font-family:"Inter","Noto Sans KR",system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+    }
+    header{
+      position:sticky;top:0;z-index:60;
+      background:linear-gradient(135deg,var(--primary),var(--primary-dark));
+      color:#fff;padding:10px 14px;box-shadow:var(--shadow)
+    }
+    header h1{margin:0;font-size:18px;font-weight:800}
+    .container{max-width:1440px;margin:12px auto;padding:0 8px}
+    .card{
+      background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);
+      padding:10px;margin-bottom:10px;border:1px solid var(--stroke);
+    }
+
+    /* Controls compact */
+    .controls{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+    .btn{
+      padding:6px 10px;border-radius:10px;border:1px solid var(--stroke);
+      cursor:pointer;font-weight:700;font-size:12px;background:var(--surface);color:var(--text)
+    }
+    .btn.primary{background:var(--primary);border-color:transparent;color:#fff}
+    .btn.ghost{background:transparent}
+    .btn.warn{background:var(--red);border-color:transparent;color:#fff}
+    .btn.icon{display:inline-flex;gap:6px;align-items:center}
+    .tab{background:#e5e7eb;border-color:transparent} 
+    .tab.active{background:var(--primary);color:#fff}
+    .muted{color:var(--muted);font-size:11px}
+    .sep{height:1px;background:var(--stroke);margin:6px 0}
+    .row{display:grid;gap:8px}
+    .row-2{grid-template-columns:1fr 1fr}
+
+    /* Sticky tools bar (beneath header) */
+    .toolbar{
+      position:sticky;top:48px;z-index:55;background:var(--surface);border:1px solid var(--stroke);
+      border-radius:10px;padding:6px 8px;display:flex;gap:8px;align-items:center;box-shadow:var(--shadow)
+    }
+    .toolbar .field{display:flex;align-items:center;gap:6px}
+    .toolbar input[type="text"]{height:28px;border:1px solid var(--stroke);background:transparent;color:var(--text);
+      border-radius:8px;padding:0 8px;font-size:12px;min-width:160px}
+    .toolbar input[type="range"]{width:160px}
+    .toolbar .divider{width:1px;height:22px;background:var(--stroke);margin:0 4px}
+
+    /* Sticky professor chips bar with right info */
+    .chipbar{
+      position:sticky;top:98px;z-index:50;background:var(--surface);
+      padding:4px 6px;border:1px solid var(--stroke);display:flex;gap:6px;align-items:center;border-radius:10px;
+      box-shadow:var(--shadow)
+    }
+    .chipwrap{
+      display:flex;gap:6px;overflow:auto;flex:1;padding-bottom:2px;
+      background:var(--panel-grad);border-radius:8px;padding:6px;border:1px dashed var(--stroke)
+    }
+    .chipinfo{
+      flex:0 0 auto;white-space:nowrap;font-weight:800;font-size:12px;color:var(--text);
+      background:var(--badge-bg);border:1px solid var(--badge-stroke);border-radius:999px;padding:6px 10px;
+    }
+    .chip{
+      flex:0 0 auto;padding:4px 10px;border-radius:999px;background:var(--chip-bg);color:var(--text);
+      font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap;border:1px solid var(--stroke)
+    }
+    .chip.active{background:var(--chip-active);border-color:transparent;color:#fff}
+
+    /* Canvases */
+    canvas{width:100% !important;}
+    /* Journal chart fixed height (adjustable via CSS var) */
+    #journalChart{height:var(--journal-height) !important; max-height:2500px}
+    /* Others: keep lower height (wide feel) */
+    #yearChart,#citeChart{height:460px !important}
+
+    /* KPI small */
+    .kpi{display:flex;gap:10px;flex-wrap:wrap}
+    .kpi .box{
+      background:var(--badge-bg);border:1px solid var(--badge-stroke);
+      border-radius:8px;padding:6px 8px;font-size:12px
+    }
+    .kpi .box b{font-size:13px;margin-left:4px}
+
+    /* Log panel for exclusions & debug */
+    .log{
+      background:var(--panel-grad);border:1px dashed var(--stroke);
+      border-radius:10px;padding:8px;display:none
+    }
+    .log table{width:100%;border-collapse:collapse;font-size:12px}
+    .log th,.log td{border-bottom:1px solid var(--stroke);padding:6px;text-align:left}
+    .log .note{font-size:11px;color:var(--muted)}
+
+    /* Little badges */
+    .badge{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:999px;font-weight:700;
+      background:var(--badge-bg);border:1px solid var(--badge-stroke);font-size:11px}
+
+    /* Footer helper */
+    footer{margin:14px 0;color:var(--muted);font-size:11px;text-align:center}
+  </style>
+</head>
+<body>
+  <!-- ================= HEADER ================= -->
+  <header>
+    <h1>📊PSID LAB Scholar Dashboard</h1>
+    <div class="muted">저널/연도/인용수</div>
+  </header>
+
+  <div class="container">
+
+    <!-- ============ TOP CONTROLS (Card) ============ -->
+    <div class="card">
+      <div class="controls">
+        <!-- Upload -->
+        <label class="btn icon" title="CSV 업로드">
+          <input id="fileInput" type="file" accept=".csv" style="display:none">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14v-2H5v2zm7-18l-5.5 5.5 1.42 1.42L11 6.83V16h2V6.83l3.08 3.09 1.42-1.42L12 2z"/></svg>
+          CSV 업로드
+        </label>
+
+        <!-- Export filtered CSV -->
+        <button id="exportBtn" class="btn icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-7h-2zM11 5.83 8.41 8.41 7 7l5-5 5 5-1.41 1.41L13 5.83V16h-2z"/></svg>
+          필터 CSV 내보내기
+        </button>
+
+        <!-- Switch theme -->
+        <button id="themeBtn" class="btn">다크모드</button>
+
+        <!-- KPI badges (compact summary) -->
+        <span class="badge">총 <b id="kpiTotal">—</b></span>
+        <span class="badge">SCI <b id="kpiSCI">—</b></span>
+        <span class="badge">국내 <b id="kpiKR">—</b></span>
+        <span class="badge">제외 <b id="kpiExcluded">—</b></span>
+
+        <!-- Category tabs -->
+        <span class="muted" style="margin-left:auto">카테고리:</span>
+        <button class="btn tab active" data-cat="SCI">SCI</button>
+        <button class="btn tab" data-cat="국내">국내</button>
+        <button class="btn tab" data-cat="ALL">전체</button>
+
+        <!-- Section tabs -->
+        <span class="muted">보기:</span>
+        <button class="btn primary" data-section="journal">저널별</button>
+        <button class="btn" data-section="year">연도별</button>
+        <button class="btn" data-section="citation">인용수별</button>
+      </div>
+
+      <div class="sep"></div>
+
+      <!-- Extra settings toolbar (sticky) -->
+      <div class="toolbar" id="toolbar">
+        <!-- Journal sort -->
+        <div class="field">
+          <span class="muted">정렬:</span>
+          <select id="sortMode" class="btn">
+            <option value="count">개수 내림차순</option>
+            <option value="alpha">저널명 A→Z</option>
+          </select>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- Professor search -->
+        <div class="field">
+          <span class="muted">교수 검색:</span>
+          <input type="text" id="profSearch" placeholder="이름 일부 입력" />
+          <button id="profClear" class="btn">초기화</button>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- Label font size -->
+        <div class="field">
+          <span class="muted">라벨 폰트:</span>
+          <input type="range" id="labelFontRange" min="8" max="14" value="10" />
+          <span id="labelFontVal" class="muted">10px</span>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- Journal chart height -->
+        <div class="field">
+          <span class="muted">저널 높이:</span>
+          <input type="range" id="heightRange" min="800" max="2500" value="1400" />
+          <span id="heightVal" class="muted">1400px</span>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- Overlay opacity -->
+        <div class="field">
+          <span class="muted">오버레이 투명도:</span>
+          <input type="range" id="overlayAlpha" min="40" max="100" value="95" />
+          <span id="overlayAlphaVal" class="muted">0.95</span>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- Download chart PNG buttons -->
+        <div class="field">
+          <button id="dlJournal" class="btn icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14v-2H5v2zm7-18 5 5h-3v4h-4V7H7l5-5z"/></svg>
+            저널 PNG
+          </button>
+          <button id="dlYear" class="btn icon">연도 PNG</button>
+          <button id="dlCite" class="btn icon">인용 PNG</button>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- Reset all -->
+        <button id="resetBtn" class="btn">전체 초기화</button>
+      </div>
+
+      <div class="sep"></div>
+
+      <!-- Legacy KPI (detailed) -->
+      <div class="kpi">
+        <div class="box">총 레코드(정제 후): <b id="kpiTotal2">—</b></div>
+        <div class="box">SCI: <b id="kpiSCI2">—</b></div>
+        <div class="box">국내: <b id="kpiKR2">—</b></div>
+        <div class="box">제외(학회/빈값): <b id="kpiExcluded2">—</b></div>
+      </div>
+      <div class="muted" style="margin-top:4px">
+      </div>
+    </div>
+
+    <!-- ============ STICKY PROFESSOR CHIPS + RIGHT COUNTER ============ -->
+    <div class="chipbar">
+      <div id="profChips" class="chipwrap"></div>
+      <div id="profInfo" class="chipinfo">오버레이: 없음</div>
+    </div>
+
+    <!-- ============ SECTIONS ============ -->
+    <div id="journalSection" class="card">
+      <div class="muted" style="margin-bottom:6px">
+      </div>
+      <canvas id="journalChart"></canvas>
+    </div>
+
+    <div id="yearSection" class="card" style="display:none">
+      <div class="muted" style="margin-bottom:6px">
+        연도별 추이(라인). 오버레이 빨강.
+      </div>
+      <canvas id="yearChart"></canvas>
+    </div>
+
+    <div id="citationSection" class="card" style="display:none">
+      <div class="muted" style="margin-bottom:6px">
+      </div>
+      <canvas id="citeChart"></canvas>
+    </div>
+
+    <!-- ============ LOG PANEL (toggle) ============ -->
+    <div class="card">
+      <div class="controls">
+        <span class="muted">정제/제외 로그</span>
+        <button id="logToggle" class="btn">펼치기</button>
+      </div>
+      <div id="logPanel" class="log">
+        <table>
+          <thead>
+            <tr>
+              <th>구분</th>
+              <th>건수</th>
+              <th>메모</th>
+            </tr>
+          </thead>
+          <tbody id="logTableBody">
+            <tr><td>학술대회/워크샵</td><td id="logConf">0</td><td>meeting / conference / symposium / workshop</td></tr>
+            <tr><td>빈값/NaN</td><td id="logEmpty">0</td><td>Journal/Conference 비어있음</td></tr>
+            <tr><td>총 제외</td><td id="logExcluded">0</td><td class="note">합계가 KPI 제외와 일치해야 합니다</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <footer>© Scholar Dashboard · Overlays, Filters & Exclusions · v1.8</footer>
+  </div>
+
+  <script>
+    /* ============================================================
+       STATE
+    ============================================================ */
+    let rowsRaw = [];           // parsed raw rows
+    let data = [];              // cleaned data (after exclusions)
+    let professors = [];        // normalized professor list (RAW + CLEAN union)
+    let selectedProf = null;    // overlay target
+    let currentCat = "SCI";     // SCI / 국내 / ALL
+    let journalChart, yearChart, citeChart;
+
+    // Exclusion counts (for log)
+    const excluded = {
+      conf: 0,    // meeting/conference/symposium/workshop
+      empty: 0,   // empty/NaN journal
+      total: 0    // sum
+    };
+
+    // UI Settings (runtime)
+    let labelFontSize = 10;     // axis label font size
+    let journalFixedHeight = 1400; // px
+    let overlayAlphaPct = 95;   // 40..100
+
+    /* ============================================================
+       UTILS & CLEANING
+    ============================================================ */
+    // Normalize professor name to prevent duplicates
+    function normalizeProfessorName(n){
+      if(!n) return "Unknown";
+      return String(n).replace(/\s+/g,' ').trim();
+    }
+
+    // Category detection: if Journal contains Hangul => 국내, else SCI
+    function detectCategory(j){ return /[가-힣]/.test(j||"") ? "국내" : "SCI"; }
+
+    // Is conference-like text?
+    function isConferenceLike(s){
+      const lower = s.toLowerCase();
+      return lower.includes("meeting") || lower.includes("conference") ||
+             lower.includes("symposium") || lower.includes("workshop");
+    }
+
+    // Journal normalization:
+    // - return null if conference-like
+    // - remove digits and trailing punctuation
+    // - return null if empty after trim
+    function normalizeJournal(j){
+      if(j === undefined || j === null) { excluded.empty++; return null; }
+      const s = String(j).trim();
+      if(!s){ excluded.empty++; return null; }
+      if(isConferenceLike(s)){ excluded.conf++; return null; }
+      let x = s.replace(/\d.*$/,"").trim().replace(/[-,:.;\u00B7\u2013\u2014\s]+$/,"").trim();
+      if(!x){ excluded.empty++; return null; }
+      return x;
+    }
+
+    function safeYear(v){
+      if(v===undefined || v===null) return null;
+      const s = String(v).trim();
+      if(!s) return null;
+      const y = parseInt(s, 10);
+      return Number.isFinite(y) ? y : null;
+    }
+
+    // Preprocess: exclude conferences & empty journals
+    function preprocess(rows){
+      excluded.conf = 0;
+      excluded.empty = 0;
+      const cleaned = [];
+      for(const r of rows){
+        const jr = r["Journal/Conference"] ?? r["Journal"] ?? "";
+        const normJournal = normalizeJournal(jr);
+        if(normJournal === null) continue; // excluded by rule
+
+        const prof = normalizeProfessorName(r["Professor"] || "Unknown");
+
+        cleaned.push({
+          Professor: prof,
+          Title: r["Title"] || "",
+          Authors: r["Authors"] || "",
+          Journal: jr,
+          JournalClean: normJournal,
+          Category: detectCategory(jr),
+          Year: safeYear(r["Year"]),
+          Citations: parseInt(r["Citations"]) || 0,
+          Link: r["Link"] || ""
+        });
+      }
+      excluded.total = excluded.conf + excluded.empty;
+      return cleaned;
+    }
+
+    // ✅ NEW: Collect professor names from RAW + CLEAN union
+    function collectProfessorNames(rawRows, cleanedRows, rosterNames = []){
+      const norm = (n)=> normalizeProfessorName(n || "");
+      const fromRoster = new Set(
+        (rosterNames || []).map(norm).filter(n => n && n !== "Unknown")
+      );
+      const fromRaw = new Set(
+        (rawRows || []).map(r => norm(r["Professor"])).filter(n => n && n !== "Unknown")
+      );
+      const fromClean = new Set(
+        (cleanedRows || []).map(d => norm(d.Professor)).filter(n => n && n !== "Unknown")
+      );
+      return [...new Set([...fromRoster, ...fromRaw, ...fromClean])]
+        .sort((a,b)=>a.localeCompare(b,'ko'));
+    }
+
+    function filteredByCategory(){
+      if(currentCat === "ALL") return data;
+      return data.filter(d=>d.Category === currentCat);
+    }
+
+    // Download helper
+    function downloadBlob(filename, content, type="text/plain"){
+      const blob = new Blob([content], { type });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // CSV export for current filtered set (optionally only selectedProf)
+    function exportFilteredCSV(onlySelected = false){
+      const arr = filteredByCategory().filter(d => !onlySelected || d.Professor === selectedProf);
+      if(!arr.length){ alert("내보낼 데이터가 없습니다."); return; }
+      const header = ["Professor","Title","Authors","Journal/Conference","Year","Citations","Link"];
+      const lines = [header.join(",")];
+      arr.forEach(d=>{
+        const row = [
+          `"${d.Professor.replace(/"/g,'""')}"`,
+          `"${(d.Title||"").replace(/"/g,'""')}"`,
+          `"${(d.Authors||"").replace(/"/g,'""')}"`,
+          `"${(d.Journal||"").replace(/"/g,'""')}"`,
+          d.Year ?? "",
+          d.Citations ?? 0,
+          `"${(d.Link||"").replace(/"/g,'""')}"`
+        ].join(",");
+        lines.push(row);
+      });
+      const csv = lines.join("\n");
+      const name = onlySelected && selectedProf ? `filtered_${currentCat}_${selectedProf}.csv` : `filtered_${currentCat}.csv`;
+      downloadBlob(name, csv, "text/csv;charset=utf-8");
+    }
+
+    // Chart PNG export
+    function downloadChartPNG(chart, filename){
+      const url = chart.toBase64Image();
+      const a = document.createElement("a");
+      a.href = url; a.download = filename; a.click();
+    }
+
+    // Debounce helper for search input
+    function debounce(fn, delay=200){
+      let t = null;
+      return (...args)=>{
+        if(t) clearTimeout(t);
+        t = setTimeout(()=>fn(...args), delay);
+      };
+    }
+
+    /* ============================================================
+       PROFESSOR CHIPS + INFO
+    ============================================================ */
+    // Render professor chips (with optional search filtering)
+    function renderChips(searchTerm=""){
+      const wrap = document.getElementById("profChips");
+      wrap.innerHTML = "";
+      const q = (searchTerm || "").trim().toLowerCase();
+
+      const list = q ? professors.filter(p => p.toLowerCase().includes(q)) : professors;
+
+      if(!list.length){
+        const empty = document.createElement("div");
+        empty.className = "muted";
+        empty.textContent = "검색 결과 없음";
+        wrap.appendChild(empty);
+        return;
+      }
+
+      list.forEach(p=>{
+        const el = document.createElement("div");
+        el.className = "chip" + (selectedProf===p ? " active" : "");
+        el.textContent = p;
+        el.title = "오버레이 " + p;
+        el.onclick = ()=>{
+          selectedProf = (selectedProf===p ? null : p);
+          updateAll(); // rebuild + info
+          // Keep scroll position; rerender chips to reflect active state
+          renderChips(q);
+        };
+        wrap.appendChild(el);
+      });
+    }
+
+    // Update right-side info badge (selected professor stats)
+    function updateProfInfo(){
+      const info = document.getElementById("profInfo");
+      if(!selectedProf){
+        info.textContent = "오버레이: 없음";
+        return;
+      }
+      const arr = filteredByCategory();
+      const n = arr.filter(d=>d.Professor === selectedProf).length;
+      const total = arr.length || 1;
+      const share = (n/total*100).toFixed(1);
+      info.textContent = `${selectedProf} · ${n.toLocaleString()}편 · ${share}%`;
+    }
+
+    /* ============================================================
+       AGGREGATIONS
+    ============================================================ */
+    function countByJournal(arr){
+      const m = new Map();
+      arr.forEach(d=> m.set(d.JournalClean, (m.get(d.JournalClean)||0)+1) );
+      return [...m.entries()].sort((a,b)=>b[1]-a[1]);
+    }
+    function countByYear(arr){
+      const m = new Map();
+      arr.forEach(d=>{ if(d.Year!==null) m.set(d.Year, (m.get(d.Year)||0)+1); });
+      const labels = [...m.keys()].sort((a,b)=>a-b);
+      return { labels, values: labels.map(y=>m.get(y)) };
+    }
+    // Citation histogram: bin=5, last bin is 100+
+    function binsCitations(arr, step=5, maxEdge=100){
+      const bins = Array(Math.floor(maxEdge/step)+1).fill(0);
+      for(const d of arr){
+        const c = d.Citations||0;
+        const idx = (c>=maxEdge) ? bins.length-1 : Math.floor(c/step);
+        bins[idx] += 1;
+      }
+      const labels = bins.map((_,i)=> i<bins.length-1 ? `${i*step}–${i*step+step-1}` : `${maxEdge}+`);
+      return { labels, values: bins };
+    }
+
+    /* ============================================================
+       CHARTS
+    ============================================================ */
+    function currentOverlayRGBA(alpha=0.95){
+      const a = Math.max(0.4, Math.min(1, alpha));
+      return `rgba(255,0,0,${a})`;
+    }
+
+    function buildJournal(){
+      const ctx = document.getElementById("journalChart").getContext("2d");
+      if(journalChart) journalChart.destroy();
+
+      const arr = filteredByCategory();
+      let all = countByJournal(arr);
+
+      // sorting
+      const mode = document.getElementById("sortMode").value;
+      if(mode === "alpha"){
+        all = all.sort((a,b)=> String(a[0]).localeCompare(String(b[0]), 'ko'));
+      } // else keep by count desc (already)
+
+      const labels = all.map(d=>d[0]);
+      const values = all.map(d=>d[1]);
+
+      // Overlay (selectedProfessor)
+      let overlay = null;
+      if(selectedProf){
+        const sub = arr.filter(d=>d.Professor===selectedProf);
+        const c2 = new Map();
+        sub.forEach(d=> c2.set(d.JournalClean, (c2.get(d.JournalClean)||0)+1) );
+        overlay = labels.map(l=> c2.get(l)||0 );
+      }
+
+      journalChart = new Chart(ctx, {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: "전체",
+              data: values,
+              backgroundColor: "rgba(57,73,171,0.3)",   // indigo
+              borderWidth: 0,
+              borderRadius: 4,
+              categoryPercentage: 0.70,                   // tighter spacing
+              barPercentage: 0.50,                        // thinner bars
+              order: 1,
+              grouped: true
+            },
+            ...(overlay ? [{
+              label: selectedProf,
+              data: overlay,
+              backgroundColor: currentOverlayRGBA(overlayAlphaPct/100),
+              borderColor: "#ff0000",
+              borderWidth: 1,
+              borderRadius: 4,
+              categoryPercentage: 0.70,
+              barPercentage: 0.35,
+              order: 2,
+              grouped: false                              // overlap
+            }] : [])
+          ]
+        },
+        options: {
+          indexAxis: "y",
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: "top", labels: { boxWidth: 10, usePointStyle: true, font: { size: 11 } } },
+            tooltip: { mode: "nearest", intersect: false }
+          },
+          scales: {
+            y: { ticks: { autoSkip: false, font: { size: labelFontSize, weight: 600 } }, grid: { display: false } },
+            x: { beginAtZero: true, grid: { color: "rgba(0,0,0,.06)" }, ticks: { font: { size: labelFontSize } } }
+          },
+          layout: { padding: { left: 0, right: 8, top: 4, bottom: 4 } }
+        }
+      });
+    }
+
+    function buildYear(){
+      const ctx = document.getElementById("yearChart").getContext("2d");
+      if(yearChart) yearChart.destroy();
+
+      const arr = filteredByCategory();
+      const all = countByYear(arr);
+
+      let overlay = null;
+      if(selectedProf){
+        const sub = arr.filter(d=>d.Professor===selectedProf);
+        const a = countByYear(sub);
+        overlay = all.labels.map(y=>{
+          const idx = a.labels.indexOf(y);
+          return idx>=0 ? a.values[idx] : 0;
+        });
+      }
+
+      yearChart = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: all.labels,
+          datasets: [
+            { label: "전체", data: all.values, borderColor: "#3949ab", backgroundColor: "rgba(57,73,171,0.18)", fill: true, tension: .25, pointRadius: 2, order: 1 },
+            // Use fixed light red fill for clarity
+            ...(overlay ? [{ label: selectedProf, data: overlay, borderColor: "#ff0000", backgroundColor: "rgba(255,0,0,0.18)", fill: true, tension: .25, pointRadius: 2, order: 2 }] : [])
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { position: "top", labels: { boxWidth: 10, usePointStyle: true, font: { size: 11 } } } },
+          scales: {
+            x: { grid: { display: false }, ticks: { font: { size: labelFontSize } } },
+            y: { beginAtZero: true, grid: { color: "rgba(0,0,0,.06)" }, ticks: { font: { size: labelFontSize } } }
+          },
+          layout: { padding: { left: 0, right: 8, top: 4, bottom: 4 } }
+        }
+      });
+    }
+
+    function buildCite(){
+      const ctx = document.getElementById("citeChart").getContext("2d");
+      if(citeChart) citeChart.destroy();
+
+      const arr = filteredByCategory();
+      const all = binsCitations(arr, 5, 100);
+
+      let overlay = null;
+      if(selectedProf){
+        const sub = arr.filter(d=>d.Professor===selectedProf);
+        overlay = binsCitations(sub, 5, 100).values;
+      }
+
+      citeChart = new Chart(ctx, {
+        type: "bar",
+        data: {
+          labels: all.labels,
+          datasets: [
+            {
+              label: "전체",
+              data: all.values,
+              backgroundColor: "rgba(57,73,171,0.3)",
+              borderRadius: 3, borderWidth: 0,
+              barPercentage: 0.80, categoryPercentage: 0.80, order: 1, grouped: true
+            },
+            ...(overlay ? [{
+              label: selectedProf,
+              data: overlay,
+              backgroundColor: currentOverlayRGBA(overlayAlphaPct/100),
+              borderColor: "#ff0000",
+              borderWidth: 1,
+              borderRadius: 3, 
+              barPercentage: 0.55, categoryPercentage: 0.80, order: 2, grouped: false
+            }] : [])
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { position: "top", labels: { boxWidth: 10, usePointStyle: true, font: { size: 11 } } },
+            tooltip: { mode: "index", intersect: false }
+          },
+          scales: {
+            x: { grid: { display: false }, ticks: { font: { size: labelFontSize } } },
+            y: { beginAtZero: true, grid: { color: "rgba(0,0,0,.06)" }, ticks: { font: { size: labelFontSize } } }
+          },
+          layout: { padding: { left: 0, right: 8, top: 4, bottom: 4 } }
+        }
+      });
+    }
+
+    /* ============================================================
+       KPI & LOG
+    ============================================================ */
+    function updateKPI(){
+      const total = data.length;
+      const sci = data.filter(d=>d.Category==="SCI").length;
+      const kr  = data.filter(d=>d.Category==="국내").length;
+      const ex  = excluded.total;
+
+      // badges
+      document.getElementById("kpiTotal").textContent = total.toLocaleString();
+      document.getElementById("kpiSCI").textContent   = sci.toLocaleString();
+      document.getElementById("kpiKR").textContent    = kr.toLocaleString();
+      document.getElementById("kpiExcluded").textContent = ex.toLocaleString();
+
+      // detailed boxes
+      document.getElementById("kpiTotal2").textContent = total.toLocaleString();
+      document.getElementById("kpiSCI2").textContent   = sci.toLocaleString();
+      document.getElementById("kpiKR2").textContent    = kr.toLocaleString();
+      document.getElementById("kpiExcluded2").textContent = ex.toLocaleString();
+
+      // log table
+      document.getElementById("logConf").textContent = excluded.conf.toLocaleString();
+      document.getElementById("logEmpty").textContent = excluded.empty.toLocaleString();
+      document.getElementById("logExcluded").textContent = ex.toLocaleString();
+    }
+
+    /* ============================================================
+       UPDATE ALL
+    ============================================================ */
+    function updateAll(){
+      updateKPI();
+      buildJournal();
+      buildYear();
+      buildCite();
+      updateProfInfo();
+    }
+
+    /* ============================================================
+       FILE LOADING
+    ============================================================ */
+    document.getElementById("fileInput").addEventListener("change", e=>{
+      const f = e.target.files[0]; if(!f) return;
+      Papa.parse(f, {
+        header: true, skipEmptyLines: true,
+        complete: (res)=>{
+          rowsRaw = res.data;
+          data = preprocess(rowsRaw);
+
+          // ✅ 합집합으로 칩 목록 생성 (원본에 이름만 있어도 칩 생성)
+          professors = collectProfessorNames(rowsRaw, data /*, optionalRosterNames */);
+
+          renderChips("");
+          selectedProf = null;
+          updateAll();
+        }
+      });
+    });
+
+    /* ============================================================
+       CATEGORY TABS
+    ============================================================ */
+    document.querySelectorAll(".btn.tab").forEach(btn=>{
+      btn.addEventListener("click", ()=>{
+        document.querySelectorAll(".btn.tab").forEach(b=>b.classList.remove("active"));
+        btn.classList.add("active");
+        currentCat = btn.dataset.cat;
+        updateAll();
+      });
+    });
+
+    /* ============================================================
+       SECTION SWITCH
+    ============================================================ */
+    document.querySelectorAll(".controls .btn").forEach(b=>{
+      if(!b.dataset.section) return;
+      b.addEventListener("click", ()=>{
+        document.querySelectorAll(".controls .btn[data-section]").forEach(x=>{
+          x.classList.remove("primary"); 
+        });
+        b.classList.add("primary");
+        const sec = b.dataset.section;
+        document.getElementById("journalSection").style.display = (sec==="journal")?"block":"none";
+        document.getElementById("yearSection").style.display    = (sec==="year")?"block":"none";
+        document.getElementById("citationSection").style.display= (sec==="citation")?"block":"none";
+      });
+    });
+
+    /* ============================================================
+       TOOLBAR EVENTS
+    ============================================================ */
+    // Theme switch
+    document.getElementById("themeBtn").addEventListener("click", ()=>{
+      const cur = document.documentElement.getAttribute("data-theme");
+      const next = cur === "dark" ? null : "dark";
+      if(next) document.documentElement.setAttribute("data-theme","dark");
+      else document.documentElement.removeAttribute("data-theme");
+      // rebuild to refresh grid colors
+      updateAll();
+    });
+
+    // Sort mode
+    document.getElementById("sortMode").addEventListener("change", ()=>{
+      buildJournal();
+    });
+
+    // Prof search (debounced)
+    const onProfSearch = debounce(()=>{
+      const q = document.getElementById("profSearch").value || "";
+      renderChips(q);
+    }, 150);
+    document.getElementById("profSearch").addEventListener("input", onProfSearch);
+    document.getElementById("profClear").addEventListener("click", ()=>{
+      document.getElementById("profSearch").value = "";
+      renderChips("");
+    });
+
+    // Label font size
+    const labelRange = document.getElementById("labelFontRange");
+    const labelVal = document.getElementById("labelFontVal");
+    labelRange.addEventListener("input", ()=>{
+      labelFontSize = parseInt(labelRange.value,10);
+      labelVal.textContent = labelFontSize + "px";
+      updateAll();
+    });
+
+    // Journal chart height
+    const heightRange = document.getElementById("heightRange");
+    const heightVal = document.getElementById("heightVal");
+    heightRange.addEventListener("input", ()=>{
+      journalFixedHeight = parseInt(heightRange.value,10);
+      heightVal.textContent = journalFixedHeight + "px";
+      document.documentElement.style.setProperty('--journal-height', journalFixedHeight + "px");
+    });
+
+    // Overlay alpha
+    const overlayR = document.getElementById("overlayAlpha");
+    const overlayVal = document.getElementById("overlayAlphaVal");
+    overlayR.addEventListener("input", ()=>{
+      overlayAlphaPct = parseInt(overlayR.value,10);
+      overlayVal.textContent = (overlayAlphaPct/100).toFixed(2);
+      // rebuild charts to reflect alpha
+      buildJournal();
+      buildCite();
+    });
+
+    // Export filtered CSV
+    document.getElementById("exportBtn").addEventListener("click", ()=>{
+      const onlySelected = !!selectedProf && confirm("현재 오버레이 인물만 내보낼까요?\n확인=오버레이만, 취소=전체(필터 기준)");
+      exportFilteredCSV(onlySelected);
+    });
+
+    // Download chart PNGs
+    document.getElementById("dlJournal").addEventListener("click", ()=> journalChart && downloadChartPNG(journalChart, `journal_${currentCat}.png`) );
+    document.getElementById("dlYear").addEventListener("click", ()=> yearChart && downloadChartPNG(yearChart, `year_${currentCat}.png`) );
+    document.getElementById("dlCite").addEventListener("click", ()=> citeChart && downloadChartPNG(citeChart, `citation_${currentCat}.png`) );
+
+    // Reset ALL
+    document.getElementById("resetBtn").addEventListener("click", ()=>{
+      currentCat = "SCI";
+      selectedProf = null;
+      document.querySelectorAll(".btn.tab").forEach(b=>b.classList.remove("active"));
+      document.querySelector('.btn.tab[data-cat="SCI"]').classList.add("active");
+
+      // toolbar resets
+      document.getElementById("sortMode").value = "count";
+      document.getElementById("profSearch").value = "";
+      labelFontSize = 10; document.getElementById("labelFontRange").value = 10; document.getElementById("labelFontVal").textContent = "10px";
+      journalFixedHeight = 1400; document.getElementById("heightRange").value = 1400; document.getElementById("heightVal").textContent = "1400px";
+      overlayAlphaPct = 95; document.getElementById("overlayAlpha").value = 95; document.getElementById("overlayAlphaVal").textContent = "0.95";
+      document.documentElement.style.setProperty('--journal-height', journalFixedHeight + "px");
+
+      renderChips("");
+      updateAll();
+    });
+
+    // Log toggle
+    document.getElementById("logToggle").addEventListener("click", ()=>{
+      const panel = document.getElementById("logPanel");
+      panel.style.display = (panel.style.display === "none" || panel.style.display === "") ? "block" : "none";
+      document.getElementById("logToggle").textContent = panel.style.display === "block" ? "접기" : "펼치기";
+    });
+
+    /* ============================================================
+       INITIAL STATE (no data loaded)
+    ============================================================ */
+    // Provide an empty initial view
+    document.addEventListener("DOMContentLoaded", ()=>{
+      // Ensure CSS variables are applied
+      document.documentElement.style.setProperty('--journal-height', journalFixedHeight + "px");
+      document.documentElement.style.setProperty('--label-font-size', labelFontSize + "px");
+      // Render empty chips
+      renderChips("");
+      updateProfInfo();
+    });
+  </script>
+</body>
+</html>
